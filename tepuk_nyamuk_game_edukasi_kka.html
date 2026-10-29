@@ -1,0 +1,1700 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tepuk Nyamuk! Misi KKA</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- Mammoth.js untuk membaca file Word (.docx) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" crossorigin="anonymous"></script>
+
+    <style>
+        /* Animasi kustom untuk nyamuk dan feedback */
+        @keyframes float {
+            0% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(5deg); }
+            100% { transform: translateY(0px) rotate(0deg); }
+        }
+        
+        .pop-in {
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Video sebagai background webcam */
+        #webcam {
+            object-fit: cover;
+            transform: scaleX(-1); /* Efek Cermin (Mirror) */
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* Canvas transparan untuk menggambar nyamuk dan pointer tangan */
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 10;
+            pointer-events: none; /* Klik tembus ke layer bawah jika ada */
+        }
+
+        /* Overlay UI Game (Skor, Soal) */
+        #game-ui {
+            z-index: 20;
+        }
+        
+        /* Custom Scrollbar untuk Dashboard Guru */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.6);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.9);
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white font-sans overflow-hidden select-none">
+
+    <!-- ========================================== -->
+    <!-- 0. LAYAR LOGIN (SISWA & GURU)              -->
+    <!-- ========================================== -->
+    <div id="login-screen" class="relative z-50 min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 p-4">
+        <button onclick="toggleFullScreen()" class="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white p-2.5 rounded-full backdrop-blur transition-all" title="Layar Penuh">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+        </button>
+
+        <div class="max-w-md w-full bg-white/10 backdrop-blur-xl border border-white/20 p-8 rounded-3xl shadow-2xl">
+            <div class="text-center mb-6">
+                <div class="inline-block p-3 bg-yellow-400/20 rounded-2xl mb-2 border border-yellow-400/40">
+                    <span class="text-5xl">🦟</span>
+                </div>
+                <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-amber-500">
+                    Tepuk Nyamuk!
+                </h1>
+                <p class="text-sm text-indigo-200 font-medium mt-1">Edukasi Interaktif KKA (Koding & AI)</p>
+            </div>
+
+            <!-- Tab Pilihan Peran -->
+            <div class="grid grid-cols-2 gap-2 bg-slate-900/70 p-1.5 rounded-2xl mb-6 border border-white/10">
+                <button id="tab-btn-siswa" onclick="switchLoginTab('siswa')" class="py-2.5 rounded-xl font-bold text-sm transition-all bg-yellow-400 text-slate-900 shadow-lg">
+                    👨‍🎓 Portal Siswa
+                </button>
+                <button id="tab-btn-guru" onclick="switchLoginTab('guru')" class="py-2.5 rounded-xl font-bold text-sm transition-all text-slate-300 hover:text-white">
+                    👨‍🏫 Portal Guru
+                </button>
+            </div>
+
+            <!-- Form Login Siswa -->
+            <div id="form-login-siswa" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-indigo-200 mb-1">Nama Siswa / Tim</label>
+                    <input type="text" id="input-nama-siswa" placeholder="Contoh: Budi / Tim Garuda" class="w-full bg-slate-900/90 border border-slate-600 rounded-xl p-3 text-white placeholder-slate-500 focus:outline-none focus:border-yellow-400">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-indigo-200 mb-1">Kelas</label>
+                    <select id="input-kelas-siswa" class="w-full bg-slate-900/90 border border-slate-600 rounded-xl p-3 text-white focus:outline-none focus:border-yellow-400">
+                        <option value="X SMK">Kelas X SMK</option>
+                        <option value="XI SMK">Kelas XI SMK</option>
+                        <option value="XII SMK">Kelas XII SMK</option>
+                    </select>
+                </div>
+                <div id="login-siswa-error" class="hidden text-xs text-red-400 font-semibold text-center bg-red-950/60 py-2 rounded-lg border border-red-500/40"></div>
+                <button onclick="handleLoginSiswa()" class="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 text-slate-950 font-black py-3.5 rounded-xl shadow-lg transition transform active:scale-95">
+                    MASUK KE ARENA GAME 🚀
+                </button>
+            </div>
+
+            <!-- Form Login Guru -->
+            <div id="form-login-guru" class="hidden space-y-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-indigo-200 mb-1">Kode Akses Guru / Admin</label>
+                    <input type="password" id="input-kode-guru" placeholder="Masukkan kode akses..." class="w-full bg-slate-900/90 border border-slate-600 rounded-xl p-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400">
+                </div>
+                <div id="login-guru-error" class="hidden text-xs text-red-400 font-semibold text-center bg-red-950/60 py-2 rounded-lg border border-red-500/40"></div>
+                <button onclick="handleLoginGuru()" class="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-black py-3.5 rounded-xl shadow-lg transition transform active:scale-95">
+                    BUKA DASHBOARD ASESMEN 🔐
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 1. DASHBOARD GURU (KELOLA ASESMEN & SOAL)  -->
+    <!-- ========================================== -->
+    <div id="teacher-screen" class="hidden relative z-50 h-screen flex flex-col bg-slate-950 text-white overflow-hidden">
+        <!-- Top Bar Guru -->
+        <div class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">👨‍🏫</span>
+                <div>
+                    <h1 class="text-xl font-black text-yellow-400">Dashboard Guru & Admin Asesmen</h1>
+                    <p class="text-xs text-slate-400">Kelola Paket Asesmen, Bank Soal KKA, dan Pantau Nilai Siswa</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="switchTeacherTab('soal')" id="btn-tab-soal" class="px-4 py-2 rounded-xl font-bold text-sm bg-indigo-600 text-white shadow">
+                    📝 Kelola Asesmen & Soal
+                </button>
+                <button onclick="switchTeacherTab('nilai')" id="btn-tab-nilai" class="px-4 py-2 rounded-xl font-bold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700">
+                    📊 Hasil Asesmen Siswa (<span id="count-hasil-nilai">0</span>)
+                </button>
+                <button onclick="logoutUser()" class="px-4 py-2 rounded-xl font-bold text-sm bg-red-600/80 hover:bg-red-600 text-white">
+                    Keluar
+                </button>
+            </div>
+        </div>
+
+        <!-- Konten Utama Guru: Tab Kelola Soal -->
+        <div id="teacher-tab-soal" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 overflow-y-auto">
+            <!-- Panel Kiri: Daftar Paket Asesmen -->
+            <div class="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col h-full max-h-[80vh]">
+                <h2 class="text-lg font-bold text-indigo-300 mb-3">📚 Paket Asesmen</h2>
+                
+                <!-- Form Tambah Paket Asesmen Baru -->
+                <div class="bg-slate-800/70 p-3 rounded-xl border border-slate-700 mb-4 space-y-2">
+                    <label class="block text-xs font-bold text-slate-300">Buat Paket Asesmen Baru</label>
+                    <input type="text" id="new-pack-title" placeholder="Nama Asesmen (Mis: Kuis AI Bab 1)" class="w-full bg-slate-900 border border-slate-600 rounded-lg p-2 text-sm text-white">
+                    <div class="flex gap-2">
+                        <select id="new-pack-kelas" class="bg-slate-900 border border-slate-600 rounded-lg p-2 text-xs text-white flex-1">
+                            <option value="Semua Kelas">Semua Kelas</option>
+                            <option value="X SMK">SMK Kelas 10</option>
+                            <option value="XI SMK">SMK Kelas 11</option>
+                            <option value="XII SMK">SMK Kelas 12</option>
+                        </select>
+                        <button onclick="createNewAssessmentPack()" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded-lg text-xs">
+                            + Buat Paket
+                        </button>
+                    </div>
+                </div>
+
+                <!-- List Paket -->
+                <div id="assessment-pack-list" class="flex-1 overflow-y-auto space-y-2 pr-1"></div>
+            </div>
+
+            <!-- Panel Kanan: Editor Soal di Paket Terpilih -->
+            <div class="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col h-full max-h-[80vh]">
+                <div class="flex flex-wrap justify-between items-center border-b border-slate-800 pb-3 mb-4 gap-2">
+                    <div>
+                        <span class="text-xs text-slate-400 uppercase font-bold">Paket Terpilih:</span>
+                        <h2 id="active-pack-title" class="text-xl font-black text-yellow-400">-</h2>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <!-- Tombol Unduh Template Word -->
+                        <button onclick="downloadWordTemplate()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3.5 py-2 rounded-xl text-xs md:text-sm shadow flex items-center gap-1.5 transition" title="Unduh Template Soal Word (.doc)">
+                            <span>📄</span> Unduh Template Word
+                        </button>
+                        <!-- Tombol Unggah File Word -->
+                        <label class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2 rounded-xl text-xs md:text-sm shadow flex items-center gap-1.5 cursor-pointer transition" title="Unggah Template Word (.doc / .docx) yang sudah diedit">
+                            <span>📤</span> Unggah Soal Word
+                            <input type="file" id="upload-word-input" accept=".doc,.docx" class="hidden" onchange="handleUploadWordTemplate(event)">
+                        </label>
+                        <!-- Tombol Tambah Soal Manual -->
+                        <button onclick="openQuestionModal()" class="bg-yellow-400 hover:bg-yellow-500 text-slate-950 font-extrabold px-4 py-2 rounded-xl text-xs md:text-sm shadow transition">
+                            + Tambah Manual
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Notifikasi Status Import Word -->
+                <div id="word-import-status" class="hidden mb-3 px-4 py-2.5 rounded-xl text-xs font-bold border"></div>
+
+                <!-- Daftar Soal dalam Paket -->
+                <div id="pack-questions-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div>
+            </div>
+        </div>
+
+        <!-- Konten Utama Guru: Tab Hasil Nilai Siswa -->
+        <div id="teacher-tab-nilai" class="hidden flex-1 p-6 overflow-y-auto">
+            <div class="max-w-5xl mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-indigo-300">📊 Rekapitulasi Nilai Asesmen Siswa</h2>
+                        <p class="text-xs text-slate-400">Data tersimpan otomatis setiap kali siswa atau kelompok menyelesaikan misi.</p>
+                    </div>
+                    <button onclick="clearAssessmentResults()" class="bg-red-500/20 hover:bg-red-500/40 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg text-xs font-bold">
+                        Hapus Semua Riwayat
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-700 text-xs uppercase text-slate-400 bg-slate-800/50">
+                                <th class="p-3">Waktu</th>
+                                <th class="p-3">Nama Siswa / Tim</th>
+                                <th class="p-3">Kelas</th>
+                                <th class="p-3">Paket Asesmen</th>
+                                <th class="p-3">Mode</th>
+                                <th class="p-3">Skor Akhir</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-hasil-body" class="divide-y divide-slate-800 text-sm"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Tambah/Edit Soal (Guru) -->
+    <div id="question-modal" class="hidden fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 max-w-lg w-full rounded-2xl p-6 shadow-2xl space-y-4">
+            <h3 id="modal-q-header" class="text-xl font-extrabold text-yellow-400">Tambah / Edit Soal</h3>
+            <input type="hidden" id="edit-q-index" value="-1">
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-300 mb-1">Pertanyaan</label>
+                <textarea id="input-q-text" rows="2" placeholder="Tulis pertanyaan kuis di sini..." class="w-full bg-slate-800 border border-slate-600 rounded-xl p-3 text-sm text-white"></textarea>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-emerald-400 mb-1">Jawaban BENAR (Nyamuk Target)</label>
+                <input type="text" id="input-q-correct" placeholder="Jawaban yang benar..." class="w-full bg-slate-800 border border-emerald-500/60 rounded-xl p-2.5 text-sm text-white">
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-red-300 mb-1">Pengecoh 1</label>
+                    <input type="text" id="input-q-dist1" placeholder="Jawaban salah 1" class="w-full bg-slate-800 border border-slate-600 rounded-xl p-2.5 text-sm text-white">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-red-300 mb-1">Pengecoh 2</label>
+                    <input type="text" id="input-q-dist2" placeholder="Jawaban salah 2" class="w-full bg-slate-800 border border-slate-600 rounded-xl p-2.5 text-sm text-white">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-red-300 mb-1">Pengecoh 3</label>
+                    <input type="text" id="input-q-dist3" placeholder="Jawaban salah 3" class="w-full bg-slate-800 border border-slate-600 rounded-xl p-2.5 text-sm text-white">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-red-300 mb-1">Pengecoh 4</label>
+                    <input type="text" id="input-q-dist4" placeholder="Jawaban salah 4" class="w-full bg-slate-800 border border-slate-600 rounded-xl p-2.5 text-sm text-white">
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                <button onclick="closeQuestionModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-bold">Batal</button>
+                <button onclick="saveQuestionItem()" class="px-5 py-2 rounded-xl bg-yellow-400 hover:bg-yellow-500 text-slate-950 text-sm font-extrabold">Simpan Soal</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 2. HALAMAN UTAMA SISWA / PENGATURAN GAME   -->
+    <!-- ========================================== -->
+    <div id="menu-screen" class="hidden relative z-50 min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 p-4 overflow-y-auto">
+        
+        <!-- Bar Info Siswa & Keluar -->
+        <div class="absolute top-4 left-4 flex items-center gap-3 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10">
+            <span class="text-sm font-bold text-yellow-300" id="student-greeting">👋 Halo, Siswa!</span>
+            <button onclick="logoutUser()" class="text-xs bg-red-500/80 hover:bg-red-600 text-white px-2.5 py-1 rounded-full font-bold transition">Ganti Akun</button>
+        </div>
+
+        <!-- Tombol Layar Penuh -->
+        <button onclick="toggleFullScreen()" class="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white p-2 rounded-full backdrop-blur transition-all">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+        </button>
+
+        <div class="max-w-3xl w-full bg-white/10 backdrop-blur-md border border-white/20 p-6 md:p-8 rounded-3xl shadow-2xl my-12">
+            <div class="text-center mb-6">
+                <h1 class="text-3xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-500 mb-1 drop-shadow-sm">
+                    🦟 Tepuk Nyamuk!
+                </h1>
+                <h2 class="text-lg md:text-xl font-semibold text-purple-200">Misi: KKA (Koding & Kecerdasan Artifisial)</h2>
+            </div>
+
+            <!-- Pilihan Mode Permainan: Individu, Battle (2-4 Layar), Kelompok -->
+            <div class="mb-6">
+                <label class="block text-xs font-bold uppercase tracking-wider text-yellow-300 mb-2 text-center">Pilih Mode Permainan</label>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button type="button" onclick="selectPlayMode('solo')" id="mode-card-solo" class="p-3.5 rounded-2xl border-2 border-yellow-400 bg-yellow-400/20 text-left transition">
+                        <div class="text-2xl mb-1">🎯 Individu (Solo)</div>
+                        <div class="text-xs text-slate-200">1 Pemain menjawab soal berurutan di satu layar penuh.</div>
+                    </button>
+                    <button type="button" onclick="selectPlayMode('battle')" id="mode-card-battle" class="p-3.5 rounded-2xl border-2 border-white/10 bg-black/20 hover:bg-white/10 text-left transition">
+                        <div class="text-2xl mb-1">⚔️ Mode Battle (2-4 Layar)</div>
+                        <div class="text-xs text-slate-300">Layar dibagi 2-4 zona arena. Adu cepat tangkap nyamuk di layar masing-masing!</div>
+                    </button>
+                    <button type="button" onclick="selectPlayMode('kelompok')" id="mode-card-kelompok" class="p-3.5 rounded-2xl border-2 border-white/10 bg-black/20 hover:bg-white/10 text-left transition">
+                        <div class="text-2xl mb-1">🤝 Mode Kelompok (Tim)</div>
+                        <div class="text-xs text-slate-300">Kerja sama beberapa tangan di layar bersama untuk mengumpulkan skor tim!</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Panel Pengaturan Bank Soal & Layar -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 bg-black/25 p-5 rounded-2xl border border-white/10">
+                
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-yellow-300 mb-1">📋 Pilih Paket Asesmen (Dari Guru)</label>
+                    <select id="setting-assessment-pack" onchange="onSelectAssessmentPack()" class="w-full bg-slate-800 border border-yellow-500/50 rounded-xl p-3 text-white font-semibold focus:ring-yellow-500 focus:border-yellow-500"></select>
+                </div>
+
+                <!-- Opsi Khusus Battle: Jumlah Layar (2 - 4 Layar) -->
+                <div id="battle-screen-config" class="hidden md:col-span-2 bg-indigo-950/80 border border-indigo-400/40 p-3.5 rounded-xl">
+                    <label class="block text-sm font-bold text-indigo-200 mb-1">🖥️ Jumlah Pembagian Layar Battle (Zona Pemain)</label>
+                    <select id="setting-battle-screens" class="w-full bg-slate-900 border border-indigo-500 rounded-lg p-2.5 text-white font-bold">
+                        <option value="2">2 Layar (Duel Kiri vs Kanan)</option>
+                        <option value="3">3 Layar (3 Kolom Arena Pemain)</option>
+                        <option value="4">4 Layar (4 Kuadran Arena 2x2)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-1">Jenjang & Kelas</label>
+                    <select id="setting-jenjang" class="w-full bg-slate-800 border border-slate-600 rounded-lg p-2.5 text-white">
+                        <option value="SMK_10">SMK Kelas 10</option>
+                        <option value="SMK_11">SMK Kelas 11</option>
+                        <option value="SMK_12">SMK Kelas 12</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-1">Kecepatan Gerak Nyamuk</label>
+                    <select id="setting-difficulty" class="w-full bg-slate-800 border border-slate-600 rounded-lg p-2.5 text-white">
+                        <option value="mudah">Mudah (Gerak Lambat)</option>
+                        <option value="sedang" selected>Sedang (Gerak Normal)</option>
+                        <option value="sulit">Sulit (Gerak Cepat, Zig-zag)</option>
+                        <option value="campur">Campur</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-1">Jumlah Nyamuk per Soal</label>
+                    <select id="setting-choices" class="w-full bg-slate-800 border border-slate-600 rounded-lg p-2.5 text-white">
+                        <option value="2">2 Nyamuk (A, B)</option>
+                        <option value="3">3 Nyamuk (A, B, C)</option>
+                        <option value="4" selected>4 Nyamuk (A, B, C, D)</option>
+                        <option value="5">5 Nyamuk (A, B, C, D, E)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-1 flex justify-between">
+                        <span>Jumlah Soal Dimainkan</span>
+                        <span id="q-count-label" class="text-yellow-400 font-bold">10 Soal</span>
+                    </label>
+                    <input type="range" id="setting-qcount" min="1" max="30" value="10" class="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-yellow-400 mt-2" oninput="document.getElementById('q-count-label').innerText = this.value + ' Soal'">
+                </div>
+            </div>
+
+            <!-- Pesan Error / Status -->
+            <div id="status-message" class="hidden text-center text-sm font-bold text-red-400 mb-4 bg-red-900/30 py-2 rounded-lg">
+                Menunggu akses kamera...
+            </div>
+
+            <button id="btn-start" onclick="startGame()" class="w-full group bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-extrabold text-xl py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(250,204,21,0.4)] flex justify-center items-center gap-3">
+                MULAI MAIN
+                <svg class="w-6 h-6 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 3. AREA PERMAINAN                          -->
+    <!-- ========================================== -->
+    <div id="game-screen" class="hidden relative w-full h-screen">
+        <!-- Feed Kamera (Background) -->
+        <video id="webcam" autoplay playsinline></video>
+        
+        <!-- Canvas Animasi Nyamuk & Tangan -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- UI Overlay Permainan -->
+        <div id="game-ui" class="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col justify-between p-4 md:p-6">
+            
+            <!-- Header: Skor (Solo/Battle/Kelompok) dan Sisa Soal -->
+            <div class="flex justify-between items-start gap-4">
+                <!-- Panel Skor Solo / Kelompok -->
+                <div id="score-panel-single" class="bg-black/60 backdrop-blur-md px-5 py-2.5 rounded-2xl border border-white/15 shadow-lg">
+                    <p id="ui-mode-label" class="text-slate-300 text-xs font-bold uppercase tracking-wider">Skor</p>
+                    <p id="ui-score" class="text-3xl md:text-4xl font-black text-yellow-400">0</p>
+                </div>
+
+                <!-- Panel Skor Battle (2-4 Pemain) -->
+                <div id="score-panel-battle" class="hidden flex flex-wrap gap-2"></div>
+                
+                <div class="bg-black/60 backdrop-blur-md px-4 py-2 rounded-xl border border-white/15 text-right">
+                    <p class="text-slate-300 text-xs font-bold uppercase">Soal ke</p>
+                    <p id="ui-progress" class="text-xl font-bold text-white">1/10</p>
+                </div>
+            </div>
+
+            <!-- Area Soal -->
+            <div class="mt-2 flex-1 flex flex-col items-center">
+                <div class="bg-indigo-950/85 backdrop-blur-xl border-2 border-indigo-400/60 px-6 py-4 rounded-3xl shadow-2xl max-w-4xl text-center">
+                    <h3 id="ui-question" class="text-xl md:text-2xl lg:text-3xl font-bold text-white leading-tight drop-shadow-md">
+                        Memuat Pertanyaan...
+                    </h3>
+                </div>
+                
+                <!-- Feedback Besar (BENAR / SALAH) -->
+                <div id="ui-feedback" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-5xl md:text-7xl font-black uppercase tracking-widest drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] z-50 text-center">
+                    BENAR!
+                </div>
+            </div>
+
+            <!-- Petunjuk Bawah -->
+            <div class="text-center bg-black/40 backdrop-blur-sm py-2 rounded-full mx-auto px-6 mb-2">
+                <p class="text-xs md:text-sm font-semibold text-slate-200">
+                    Buka tangan untuk membidik, <span class="text-yellow-300 font-bold">Genggam/Kepalkan tangan</span> tepat di atas nyamuk jawaban!
+                </p>
+            </div>
+            
+            <!-- Tombol Keluar Darurat -->
+            <div class="absolute bottom-4 right-4 pointer-events-auto">
+                <button onclick="backToStudentMenu()" class="bg-red-500/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-bold text-sm backdrop-blur transition">Kembali ke Menu</button>
+            </div>
+        </div>
+
+        <!-- Layar Game Over -->
+        <div id="game-over-screen" class="hidden absolute top-0 left-0 w-full h-full bg-slate-900/90 backdrop-blur-lg z-[60] flex items-center justify-center pointer-events-auto p-4">
+            <div class="bg-white text-slate-900 p-8 rounded-3xl text-center max-w-lg w-full shadow-2xl">
+                <h2 class="text-4xl md:text-5xl font-black mb-2 text-indigo-600">MISI SELESAI!</h2>
+                <p id="gameover-subtitle" class="text-base text-slate-600 mb-6">Kamu telah menyelesaikan asesmen.</p>
+                
+                <!-- Ringkasan Skor Solo/Kelompok -->
+                <div id="gameover-single-box" class="bg-slate-100 rounded-2xl p-6 mb-6">
+                    <p class="text-sm font-bold text-slate-500 uppercase">Skor Akhir</p>
+                    <p id="final-score" class="text-6xl font-black text-yellow-500 drop-shadow-md">100</p>
+                </div>
+
+                <!-- Ringkasan Skor Battle -->
+                <div id="gameover-battle-box" class="hidden bg-slate-100 rounded-2xl p-4 mb-6 space-y-2 text-left"></div>
+
+                <div class="flex gap-3">
+                    <button onclick="backToStudentMenu()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg py-3.5 rounded-xl transition shadow-lg">
+                        KEMBALI KE MENU
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPT LOGIKA PERMAINAN, AUTH, ASESMEN & MULTI-SCREEN BATTLE -->
+    <script>
+        // ==========================================
+        // 1. DATA DEFAULT BANK SOAL & PAKET ASESMEN
+        // ==========================================
+        const defaultQuestionsKKA = [
+            { q: "Apa saja 4 pilar utama Berpikir Komputasional?", a: "Dekomposisi, Pola, Abstraksi, Algoritma", dist: ["Coding, Desain, Testing, Rilis", "Input, Proses, Output, Storage", "Hardware, Software, Brainware, Network", "Analisis, Desain, Implementasi, Testing"] },
+            { q: "Proses memecah masalah besar menjadi bagian-bagian kecil disebut...", a: "Dekomposisi", dist: ["Abstraksi", "Pengenalan Pola", "Algoritma", "Evaluasi"] },
+            { q: "Fokus pada informasi penting dan mengabaikan detail yang tidak relevan disebut...", a: "Abstraksi", dist: ["Dekomposisi", "Pengenalan Pola", "Algoritma", "Debugging"] },
+            { q: "Langkah-langkah sistematis untuk menyelesaikan suatu masalah disebut...", a: "Algoritma", dist: ["Sintaks", "Bug", "Variabel", "Tipe Data"] },
+            { q: "Bahasa pemrograman yang sering digunakan untuk membuat halaman web interaktif adalah...", a: "JavaScript", dist: ["HTML", "CSS", "SQL", "Photoshop"] },
+            { q: "Kecerdasan Buatan (AI) yang dirancang untuk satu tugas spesifik disebut...", a: "Narrow AI (AI Sempit)", dist: ["General AI", "Super AI", "Strong AI", "Human AI"] },
+            { q: "Cabang AI yang berfokus pada melatih mesin untuk belajar dari data adalah...", a: "Machine Learning", dist: ["Expert Systems", "Robotics", "Computer Vision", "Natural Language Processing"] },
+            { q: "Apa kepanjangan dari AI?", a: "Artificial Intelligence", dist: ["Automated Information", "Advanced Interface", "Actual Intelligence", "Applied Interaction"] },
+            { q: "Dalam koding, tempat untuk menyimpan nilai data disebut...", a: "Variabel", dist: ["Fungsi", "Looping", "Kondisi", "Sintaks"] },
+            { q: "Struktur kontrol yang digunakan untuk mengulang blok kode adalah...", a: "Looping (Perulangan)", dist: ["If-Else (Percabangan)", "Array", "Fungsi", "Variabel"] },
+            { q: "Tag HTML dasar untuk membuat paragraf adalah...", a: "<p>", dist: ["<h1>", "<a>", "<div>", "<span>"] },
+            { q: "Bapak Ilmu Komputer yang terkenal dengan mesin Turing-nya adalah...", a: "Alan Turing", dist: ["Bill Gates", "Steve Jobs", "Mark Zuckerberg", "Tim Berners-Lee"] },
+            { q: "Bagian dari Machine Learning yang meniru cara kerja otak manusia disebut...", a: "Neural Network", dist: ["Decision Tree", "Linear Regression", "K-Means", "Random Forest"] },
+            { q: "Kemampuan AI untuk memahami dan merespons teks manusia disebut...", a: "NLP (Natural Language Processing)", dist: ["Computer Vision", "Robotics", "Data Mining", "Data Science"] },
+            { q: "Simbol yang digunakan untuk memberikan komentar satu baris di JavaScript adalah...", a: "//", dist: ["<!-- -->", "/* */", "#", "--"] }
+        ];
+
+        // Daftar Paket Asesmen yang diinput/dikelola Guru
+        let assessmentPacks = [
+            {
+                id: 'pack_default_1',
+                title: 'Asesmen Utama: Dasar Koding & AI (KKA)',
+                kelas: 'Semua Kelas',
+                questions: JSON.parse(JSON.stringify(defaultQuestionsKKA))
+            },
+            {
+                id: 'pack_default_2',
+                title: 'Kuis Cepat: Berpikir Komputasional',
+                kelas: 'X SMK',
+                questions: JSON.parse(JSON.stringify(defaultQuestionsKKA.slice(0, 6)))
+            }
+        ];
+
+        let activeTeacherPackId = 'pack_default_1';
+        let assessmentResults = []; // Menyimpan riwayat nilai siswa
+
+        // ==========================================
+        // 2. SISTEM LOGIN (SISWA & GURU - KODE: ilham123)
+        // ==========================================
+        const ADMIN_ACCESS_CODE = "ilham123";
+        let currentStudent = { name: "Siswa", kelas: "X SMK" };
+
+        function switchLoginTab(role) {
+            const tabSiswa = document.getElementById('tab-btn-siswa');
+            const tabGuru = document.getElementById('tab-btn-guru');
+            const formSiswa = document.getElementById('form-login-siswa');
+            const formGuru = document.getElementById('form-login-guru');
+
+            if (role === 'siswa') {
+                tabSiswa.className = "py-2.5 rounded-xl font-bold text-sm transition-all bg-yellow-400 text-slate-900 shadow-lg";
+                tabGuru.className = "py-2.5 rounded-xl font-bold text-sm transition-all text-slate-300 hover:text-white";
+                formSiswa.classList.remove('hidden');
+                formGuru.classList.add('hidden');
+            } else {
+                tabGuru.className = "py-2.5 rounded-xl font-bold text-sm transition-all bg-indigo-500 text-white shadow-lg";
+                tabSiswa.className = "py-2.5 rounded-xl font-bold text-sm transition-all text-slate-300 hover:text-white";
+                formGuru.classList.remove('hidden');
+                formSiswa.classList.add('hidden');
+            }
+        }
+
+        function handleLoginSiswa() {
+            const nameInput = document.getElementById('input-nama-siswa').value.trim();
+            const kelasInput = document.getElementById('input-kelas-siswa').value;
+            const errBox = document.getElementById('login-siswa-error');
+
+            if (!nameInput) {
+                errBox.innerText = "Harap masukkan Nama Siswa atau Nama Tim terlebih dahulu!";
+                errBox.classList.remove('hidden');
+                return;
+            }
+            errBox.classList.add('hidden');
+            currentStudent = { name: nameInput, kelas: kelasInput };
+
+            document.getElementById('student-greeting').innerText = `👋 ${currentStudent.name} (${currentStudent.kelas})`;
+            populateStudentAssessmentDropdown();
+
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('menu-screen').classList.remove('hidden');
+        }
+
+        function handleLoginGuru() {
+            const codeInput = document.getElementById('input-kode-guru').value;
+            const errBox = document.getElementById('login-guru-error');
+
+            if (codeInput !== ADMIN_ACCESS_CODE) {
+                errBox.innerText = "Kode Akses Salah! Gunakan kode akses guru yang benar.";
+                errBox.classList.remove('hidden');
+                return;
+            }
+            errBox.classList.add('hidden');
+            document.getElementById('input-kode-guru').value = "";
+
+            renderTeacherDashboard();
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('teacher-screen').classList.remove('hidden');
+        }
+
+        function logoutUser() {
+            isGameRunning = false;
+            if (gameLoopId) cancelAnimationFrame(gameLoopId);
+
+            document.getElementById('game-screen').classList.add('hidden');
+            document.getElementById('menu-screen').classList.add('hidden');
+            document.getElementById('teacher-screen').classList.add('hidden');
+            document.getElementById('login-screen').classList.remove('hidden');
+        }
+
+        // ==========================================
+        // 3. LOGIKA DASHBOARD ASESMEN GURU
+        // ==========================================
+        function switchTeacherTab(tab) {
+            const tabSoal = document.getElementById('teacher-tab-soal');
+            const tabNilai = document.getElementById('teacher-tab-nilai');
+            const btnSoal = document.getElementById('btn-tab-soal');
+            const btnNilai = document.getElementById('btn-tab-nilai');
+
+            if (tab === 'soal') {
+                tabSoal.classList.remove('hidden');
+                tabNilai.classList.add('hidden');
+                btnSoal.className = "px-4 py-2 rounded-xl font-bold text-sm bg-indigo-600 text-white shadow";
+                btnNilai.className = "px-4 py-2 rounded-xl font-bold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700";
+            } else {
+                tabSoal.classList.add('hidden');
+                tabNilai.classList.remove('hidden');
+                btnNilai.className = "px-4 py-2 rounded-xl font-bold text-sm bg-indigo-600 text-white shadow";
+                btnSoal.className = "px-4 py-2 rounded-xl font-bold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700";
+                renderAssessmentResultsTable();
+            }
+        }
+
+        function renderTeacherDashboard() {
+            const packListEl = document.getElementById('assessment-pack-list');
+            packListEl.innerHTML = '';
+
+            assessmentPacks.forEach(pack => {
+                const isActive = pack.id === activeTeacherPackId;
+                const item = document.createElement('div');
+                item.className = `p-3.5 rounded-xl border transition cursor-pointer flex justify-between items-center ${isActive ? 'bg-indigo-600/30 border-indigo-400' : 'bg-slate-800/60 border-slate-700 hover:bg-slate-800'}`;
+                item.onclick = () => {
+                    activeTeacherPackId = pack.id;
+                    renderTeacherDashboard();
+                };
+
+                item.innerHTML = `
+                    <div>
+                        <div class="font-bold text-sm text-white">${pack.title}</div>
+                        <div class="text-xs text-slate-400 mt-0.5">${pack.kelas} • <span class="text-yellow-400 font-semibold">${pack.questions.length} Soal</span></div>
+                    </div>
+                    ${assessmentPacks.length > 1 ? `<button onclick="event.stopPropagation(); deleteAssessmentPack('${pack.id}')" class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-300 px-2.5 py-1 rounded-lg">Hapus</button>` : ''}
+                `;
+                packListEl.appendChild(item);
+            });
+
+            renderActivePackQuestions();
+            document.getElementById('count-hasil-nilai').innerText = assessmentResults.length;
+        }
+
+        function renderActivePackQuestions() {
+            const activePack = assessmentPacks.find(p => p.id === activeTeacherPackId) || assessmentPacks[0];
+            if (!activePack) return;
+
+            document.getElementById('active-pack-title').innerText = `${activePack.title} (${activePack.questions.length} Soal)`;
+            const listEl = document.getElementById('pack-questions-list');
+            listEl.innerHTML = '';
+
+            if (activePack.questions.length === 0) {
+                listEl.innerHTML = `<div class="text-center py-12 text-slate-500">Belum ada soal di paket asesmen ini. Klik "+ Tambah Soal Baru".</div>`;
+                return;
+            }
+
+            activePack.questions.forEach((qItem, idx) => {
+                const card = document.createElement('div');
+                card.className = "bg-slate-800/80 border border-slate-700 rounded-xl p-4 flex flex-col sm:flex-row justify-between gap-4";
+                card.innerHTML = `
+                    <div class="space-y-1.5 flex-1">
+                        <div class="text-xs font-bold text-indigo-300">Soal #${idx + 1}</div>
+                        <div class="font-bold text-white text-sm md:text-base">${qItem.q}</div>
+                        <div class="flex flex-wrap gap-1.5 pt-1">
+                            <span class="text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-2.5 py-0.5 rounded-full font-semibold">✓ ${qItem.a}</span>
+                            ${qItem.dist.map(d => `<span class="text-xs bg-slate-700 text-slate-300 px-2.5 py-0.5 rounded-full">✗ ${d}</span>`).join('')}
+                        </div>
+                    </div>
+                    <div class="flex sm:flex-col gap-2 justify-end">
+                        <button onclick="openQuestionModal(${idx})" class="bg-indigo-500/30 hover:bg-indigo-500/50 border border-indigo-400/40 text-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold">Edit</button>
+                        <button onclick="deleteQuestionItem(${idx})" class="bg-red-500/20 hover:bg-red-500/40 border border-red-400/30 text-red-300 px-3 py-1.5 rounded-lg text-xs font-bold">Hapus</button>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        function createNewAssessmentPack() {
+            const titleEl = document.getElementById('new-pack-title');
+            const kelasEl = document.getElementById('new-pack-kelas');
+            const title = titleEl.value.trim();
+            if (!title) return;
+
+            const newId = 'pack_' + Date.now();
+            assessmentPacks.push({
+                id: newId,
+                title: title,
+                kelas: kelasEl.value,
+                questions: [
+                    { q: "Contoh Soal: Apa fungsi utama algoritma dalam pemrograman?", a: "Menyelesaikan masalah secara sistematis", dist: ["Merusak komputer", "Menghapus memori", "Membuat layar mati", "Memperlambat jaringan"] }
+                ]
+            });
+            titleEl.value = '';
+            activeTeacherPackId = newId;
+            renderTeacherDashboard();
+        }
+
+        function deleteAssessmentPack(packId) {
+            if (assessmentPacks.length <= 1) return;
+            assessmentPacks = assessmentPacks.filter(p => p.id !== packId);
+            activeTeacherPackId = assessmentPacks[0].id;
+            renderTeacherDashboard();
+        }
+
+        function openQuestionModal(editIndex = -1) {
+            const modal = document.getElementById('question-modal');
+            document.getElementById('edit-q-index').value = editIndex;
+            const activePack = assessmentPacks.find(p => p.id === activeTeacherPackId);
+
+            if (editIndex >= 0 && activePack && activePack.questions[editIndex]) {
+                const q = activePack.questions[editIndex];
+                document.getElementById('modal-q-header').innerText = `Edit Soal #${editIndex + 1}`;
+                document.getElementById('input-q-text').value = q.q;
+                document.getElementById('input-q-correct').value = q.a;
+                document.getElementById('input-q-dist1').value = q.dist[0] || '';
+                document.getElementById('input-q-dist2').value = q.dist[1] || '';
+                document.getElementById('input-q-dist3').value = q.dist[2] || '';
+                document.getElementById('input-q-dist4').value = q.dist[3] || '';
+            } else {
+                document.getElementById('modal-q-header').innerText = "Tambah Soal Baru";
+                document.getElementById('input-q-text').value = '';
+                document.getElementById('input-q-correct').value = '';
+                document.getElementById('input-q-dist1').value = '';
+                document.getElementById('input-q-dist2').value = '';
+                document.getElementById('input-q-dist3').value = '';
+                document.getElementById('input-q-dist4').value = '';
+            }
+            modal.classList.remove('hidden');
+        }
+
+        function closeQuestionModal() {
+            document.getElementById('question-modal').classList.add('hidden');
+        }
+
+        function saveQuestionItem() {
+            const qText = document.getElementById('input-q-text').value.trim();
+            const qCorrect = document.getElementById('input-q-correct').value.trim();
+            const d1 = document.getElementById('input-q-dist1').value.trim();
+            const d2 = document.getElementById('input-q-dist2').value.trim();
+            const d3 = document.getElementById('input-q-dist3').value.trim();
+            const d4 = document.getElementById('input-q-dist4').value.trim();
+
+            if (!qText || !qCorrect || !d1) return;
+
+            const distractors = [d1, d2, d3, d4].filter(Boolean);
+            const activePack = assessmentPacks.find(p => p.id === activeTeacherPackId);
+            if (!activePack) return;
+
+            const editIdx = parseInt(document.getElementById('edit-q-index').value);
+            const newQuestionObj = { q: qText, a: qCorrect, dist: distractors };
+
+            if (editIdx >= 0) {
+                activePack.questions[editIdx] = newQuestionObj;
+            } else {
+                activePack.questions.push(newQuestionObj);
+            }
+
+            closeQuestionModal();
+            renderTeacherDashboard();
+        }
+
+        function deleteQuestionItem(idx) {
+            const activePack = assessmentPacks.find(p => p.id === activeTeacherPackId);
+            if (!activePack) return;
+            activePack.questions.splice(idx, 1);
+            renderTeacherDashboard();
+        }
+
+        // ==========================================
+        // FITUR UNDUH & UNGGAH TEMPLATE WORD (.DOC / .DOCX)
+        // ==========================================
+        function showWordStatus(message, isError = false) {
+            const statusBox = document.getElementById('word-import-status');
+            statusBox.classList.remove('hidden');
+            if (isError) {
+                statusBox.className = "mb-3 px-4 py-2.5 rounded-xl text-xs font-bold border bg-red-950/70 border-red-500/50 text-red-300";
+            } else {
+                statusBox.className = "mb-3 px-4 py-2.5 rounded-xl text-xs font-bold border bg-emerald-950/70 border-emerald-500/50 text-emerald-300";
+            }
+            statusBox.innerText = message;
+            setTimeout(() => {
+                statusBox.classList.add('hidden');
+            }, 6000);
+        }
+
+        function downloadWordTemplate() {
+            const activePack = assessmentPacks.find(p => p.id === activeTeacherPackId);
+            const packName = activePack ? activePack.title : "KKA";
+
+            const wordHtmlContent = `
+                <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+                <head>
+                    <meta charset="utf-8">
+                    <title>Template Soal Tepuk Nyamuk KKA</title>
+                    <style>
+                        body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #111827; }
+                        h1 { color: #1e1b4b; font-size: 16pt; margin-bottom: 4px; }
+                        p.subtitle { color: #4b5563; font-size: 10pt; margin-top: 0; margin-bottom: 12px; }
+                        .instructions { background: #f3f4f6; border: 1px solid #d1d5db; padding: 10px; margin-bottom: 16px; font-size: 10pt; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                        th, td { border: 1px solid #000000; padding: 8px; text-align: left; vertical-align: top; }
+                        th { background-color: #e0e7ff; font-weight: bold; color: #1e1b4b; }
+                    </style>
+                </head>
+                <body>
+                    <h1>TEMPLATE BANK SOAL - TEPUK NYAMUK! MISI KKA</h1>
+                    <p class="subtitle">Paket Asesmen: <b>${packName}</b></p>
+                    <div class="instructions">
+                        <b>PETUNJUK PENGISIAN UNTUK GURU:</b><br>
+                        1. Silakan edit atau tambahkan baris baru pada tabel di bawah ini menggunakan Microsoft Word.<br>
+                        2. Pastikan kolom <b>Pertanyaan</b>, <b>Jawaban Benar</b>, dan minimal <b>Pengecoh 1</b> terisi.<br>
+                        3. Jangan mengubah urutan kolom pada tabel. Setelah selesai diedit, <b>Simpan (Save)</b> file ini dalam format <b>.doc</b> atau <b>.docx</b> lalu unggah kembali di Dashboard Guru.
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 5%;">No</th>
+                                <th style="width: 35%;">Pertanyaan</th>
+                                <th style="width: 15%;">Jawaban Benar</th>
+                                <th style="width: 15%;">Pengecoh 1</th>
+                                <th style="width: 15%;">Pengecoh 2</th>
+                                <th style="width: 15%;">Pengecoh 3</th>
+                                <th style="width: 15%;">Pengecoh 4</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>1</td>
+                                <td>Apa saja 4 pilar utama dalam Berpikir Komputasional?</td>
+                                <td>Dekomposisi, Pola, Abstraksi, Algoritma</td>
+                                <td>Input, Proses, Output, Storage</td>
+                                <td>Hardware, Software, Brainware</td>
+                                <td>Coding, Testing, Debugging</td>
+                                <td>Analisis, Desain, Evaluasi</td>
+                            </tr>
+                            <tr>
+                                <td>2</td>
+                                <td>Proses memecah masalah kompleks menjadi bagian yang lebih kecil dan mudah dikelola disebut...</td>
+                                <td>Dekomposisi</td>
+                                <td>Abstraksi</td>
+                                <td>Pengenalan Pola</td>
+                                <td>Algoritma</td>
+                                <td>Kompilasi</td>
+                            </tr>
+                            <tr>
+                                <td>3</td>
+                                <td>Cabang Kecerdasan Artifisial (AI) yang melatih komputer untuk belajar dari data adalah...</td>
+                                <td>Machine Learning</td>
+                                <td>Jaringan Komputer</td>
+                                <td>Desain Grafis</td>
+                                <td>Basis Data Relasional</td>
+                                <td>Sistem Operasi</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </body>
+                </html>
+            `;
+
+            const blob = new Blob(['\ufeff', wordHtmlContent], {
+                type: 'application/msword;charset=utf-8'
+            });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `Template_Soal_Tepuk_Nyamuk_KKA.doc`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            showWordStatus("Template Word (.doc) berhasil diunduh! Silakan buka di Microsoft Word, edit soalnya, lalu unggah kembali.");
+        }
+
+        function handleUploadWordTemplate(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileName = file.name.toLowerCase();
+            if (!fileName.endsWith('.doc') && !fileName.endsWith('.docx')) {
+                showWordStatus("Format file tidak didukung! Harap unggah file Word (.doc atau .docx).", true);
+                event.target.value = '';
+                return;
+            }
+
+            // Coba baca sebagai dokumen HTML/XML Word (.doc dari template) terlebih dahulu, atau gunakan Mammoth untuk .docx murni
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                const textDecoder = new TextDecoder('utf-8');
+                const rawText = textDecoder.decode(arrayBuffer);
+
+                // Jika file merupakan Word berbasis HTML (.doc yang diunduh dari template dan disimpan ulang)
+                if (rawText.includes('<table') && rawText.includes('<tr')) {
+                    parseQuestionsFromHtmlTable(rawText);
+                    event.target.value = '';
+                } else if (window.mammoth) {
+                    // Jika disimpan sebagai binary .docx oleh MS Word, ekstrak tabel HTML via Mammoth.js
+                    mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
+                        .then(function(result) {
+                            parseQuestionsFromHtmlTable(result.value);
+                            event.target.value = '';
+                        })
+                        .catch(function(err) {
+                            console.error("Mammoth Error:", err);
+                            showWordStatus("Gagal membaca file Word (.docx). Pastikan file berisi tabel sesuai template!", true);
+                            event.target.value = '';
+                        });
+                } else {
+                    showWordStatus("Tidak dapat membaca format file ini. Gunakan template Word yang telah disediakan.", true);
+                    event.target.value = '';
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function parseQuestionsFromHtmlTable(htmlString) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlString, 'text/html');
+            const rows = doc.querySelectorAll('table tr');
+
+            if (!rows || rows.length === 0) {
+                showWordStatus("Tabel soal tidak ditemukan di dalam dokumen Word! Pastikan Anda mengisi di dalam tabel template.", true);
+                return;
+            }
+
+            const importedQuestions = [];
+
+            rows.forEach((row, index) => {
+                const cells = row.querySelectorAll('td');
+                // Lewati baris header (yang menggunakan <th> atau baris pertama yang berisi teks "Pertanyaan")
+                if (cells.length < 4) return;
+
+                let colOffset = 0;
+                // Jika kolom pertama adalah nomor urut (angka atau "No"), maka pertanyaan ada di kolom indeks 1
+                const firstCellText = cells[0].innerText.trim();
+                if (/^\d+$/.test(firstCellText) || firstCellText.toLowerCase() === 'no' || cells.length >= 5) {
+                    colOffset = 1;
+                }
+
+                const qText = (cells[colOffset]?.innerText || '').trim();
+                const aText = (cells[colOffset + 1]?.innerText || '').trim();
+
+                // Abaikan jika baris ini adalah judul kolom
+                if (!qText || !aText || qText.toLowerCase() === 'pertanyaan' || aText.toLowerCase() === 'jawaban benar') {
+                    return;
+                }
+
+                const dist = [];
+                for (let c = colOffset + 2; c < cells.length; c++) {
+                    const dVal = (cells[c]?.innerText || '').trim();
+                    if (dVal) dist.push(dVal);
+                }
+
+                if (dist.length > 0) {
+                    importedQuestions.push({
+                        q: qText,
+                        a: aText,
+                        dist: dist.slice(0, 4)
+                    });
+                }
+            });
+
+            if (importedQuestions.length === 0) {
+                showWordStatus("Tidak ada soal valid yang ditemukan. Pastikan kolom Pertanyaan, Jawaban Benar, dan Pengecoh terisi!", true);
+                return;
+            }
+
+            const activePack = assessmentPacks.find(p => p.id === activeTeacherPackId);
+            if (activePack) {
+                activePack.questions.push(...importedQuestions);
+                renderTeacherDashboard();
+                showWordStatus(`Berhasil mengimpor ${importedQuestions.length} soal dari dokumen Word ke paket "${activePack.title}"!`);
+            }
+        }
+
+        function renderAssessmentResultsTable() {
+            const tbody = document.getElementById('table-hasil-body');
+            tbody.innerHTML = '';
+
+            if (assessmentResults.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-500">Belum ada data asesmen yang diselesaikan siswa.</td></tr>`;
+                return;
+            }
+
+            assessmentResults.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/40";
+                tr.innerHTML = `
+                    <td class="p-3 text-slate-400 text-xs">${r.time}</td>
+                    <td class="p-3 font-bold text-white">${r.studentName}</td>
+                    <td class="p-3 text-slate-300">${r.kelas}</td>
+                    <td class="p-3 text-indigo-300 font-medium">${r.packTitle}</td>
+                    <td class="p-3"><span class="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300">${r.modeLabel}</span></td>
+                    <td class="p-3 font-black text-yellow-400 text-base">${r.scoreDisplay}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function clearAssessmentResults() {
+            assessmentResults = [];
+            renderAssessmentResultsTable();
+            document.getElementById('count-hasil-nilai').innerText = "0";
+        }
+
+        // ==========================================
+        // 4. PENGATURAN MENU SISWA & PEMILIHAN MODE
+        // ==========================================
+        let selectedPlayMode = 'solo'; // 'solo' | 'battle' | 'kelompok'
+
+        function populateStudentAssessmentDropdown() {
+            const selectEl = document.getElementById('setting-assessment-pack');
+            selectEl.innerHTML = '';
+
+            assessmentPacks.forEach(pack => {
+                if (pack.questions.length > 0) {
+                    const opt = document.createElement('option');
+                    opt.value = pack.id;
+                    opt.innerText = `${pack.title} (${pack.questions.length} Soal - ${pack.kelas})`;
+                    selectEl.appendChild(opt);
+                }
+            });
+            onSelectAssessmentPack();
+        }
+
+        function onSelectAssessmentPack() {
+            const selectEl = document.getElementById('setting-assessment-pack');
+            const pack = assessmentPacks.find(p => p.id === selectEl.value) || assessmentPacks[0];
+            if (!pack) return;
+
+            const slider = document.getElementById('setting-qcount');
+            slider.max = Math.max(1, pack.questions.length);
+            slider.value = Math.min(10, pack.questions.length);
+            document.getElementById('q-count-label').innerText = slider.value + ' Soal';
+        }
+
+        function selectPlayMode(mode) {
+            selectedPlayMode = mode;
+            const modes = ['solo', 'battle', 'kelompok'];
+            modes.forEach(m => {
+                const card = document.getElementById(`mode-card-${m}`);
+                if (m === mode) {
+                    card.className = "p-3.5 rounded-2xl border-2 border-yellow-400 bg-yellow-400/20 text-left transition shadow-lg";
+                } else {
+                    card.className = "p-3.5 rounded-2xl border-2 border-white/10 bg-black/20 hover:bg-white/10 text-left transition";
+                }
+            });
+
+            const battleConfig = document.getElementById('battle-screen-config');
+            if (mode === 'battle') {
+                battleConfig.classList.remove('hidden');
+            } else {
+                battleConfig.classList.add('hidden');
+            }
+        }
+
+        // ==========================================
+        // 5. VARIABEL GLOBAL GAME & MULTI-SCREEN BATTLE
+        // ==========================================
+        let gameSettings = {
+            count: 10,
+            diff: 'sedang',
+            choices: 4,
+            mode: 'solo',
+            battleScreens: 2,
+            packId: 'pack_default_1',
+            packTitle: ''
+        };
+
+        let currentQuestions = [];
+        let currentQIndex = 0;
+        let score = 0; // Skor Solo / Kelompok
+        let battleScores = [0, 0, 0, 0]; // Skor Pemain 1-4 pada Mode Battle
+        let mosquitos = [];
+        let gameLoopId;
+        
+        // State CV dan Multi-Tangan (Mendukung hingga 4 tangan sekaligus untuk Battle/Kelompok)
+        let isGameRunning = false;
+        let isWaitingFeedback = false;
+        let trackedHands = []; // Array berisi { x, y, isFist }
+        let prevHandsFist = [false, false, false, false];
+        
+        // MediaPipe
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('game-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        let camera;
+        let hands;
+
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => console.log(err));
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        }
+
+        // Helper Pembagian Layar (Zona 2 - 4 Layar untuk Mode Battle)
+        function getZoneBounds(zoneIndex, totalZones) {
+            const W = canvasElement.width;
+            const H = canvasElement.height;
+
+            if (totalZones === 1) {
+                return { x: 0, y: 0, w: W, h: H };
+            } else if (totalZones === 2) {
+                // 2 Layar: Kiri vs Kanan
+                const w = W / 2;
+                return { x: zoneIndex * w, y: 0, w: w, h: H };
+            } else if (totalZones === 3) {
+                // 3 Layar: 3 Kolom Vertikal
+                const w = W / 3;
+                return { x: zoneIndex * w, y: 0, w: w, h: H };
+            } else {
+                // 4 Layar: 2x2 Kuadran Layar
+                const w = W / 2;
+                const h = H / 2;
+                const col = zoneIndex % 2;
+                const row = Math.floor(zoneIndex / 2);
+                return { x: col * w, y: row * h, w: w, h: h };
+            }
+        }
+
+        // Menentukan koordinat (x,y) berada di zona layar mana
+        function getZoneIndexFromPoint(px, py, totalZones) {
+            for (let z = 0; z < totalZones; z++) {
+                const b = getZoneBounds(z, totalZones);
+                if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+                    return z;
+                }
+            }
+            return 0;
+        }
+
+        // ==========================================
+        // 6. CLASS NYAMUK (Mendukung Zona Layar Battle)
+        // ==========================================
+        class Mosquito {
+            constructor(text, isCorrect, difficulty, zoneIndex = 0, totalZones = 1) {
+                this.text = text;
+                this.isCorrect = isCorrect;
+                this.zoneIndex = zoneIndex;
+                this.totalZones = totalZones;
+                this.radius = totalZones > 2 ? 36 : 46;
+
+                const bounds = getZoneBounds(zoneIndex, totalZones);
+                const marginX = Math.min(60, bounds.w * 0.15);
+                const marginTop = totalZones === 4 && zoneIndex < 2 ? 120 : 130;
+                const marginBottom = 80;
+
+                const availW = Math.max(40, bounds.w - marginX * 2);
+                const availH = Math.max(40, bounds.h - marginTop - marginBottom);
+
+                this.x = bounds.x + marginX + Math.random() * availW;
+                this.y = bounds.y + marginTop + Math.random() * availH;
+                
+                let baseSpeed = difficulty === 'mudah' ? 1.4 : (difficulty === 'sulit' ? 3.6 : 2.2);
+                if (difficulty === 'campur') baseSpeed = 1.4 + Math.random() * 2.5;
+                if (totalZones >= 3) baseSpeed *= 0.8; // Sesuaikan agar proporsional di layar bagi
+
+                const angle = Math.random() * Math.PI * 2;
+                this.vx = Math.cos(angle) * baseSpeed;
+                this.vy = Math.sin(angle) * baseSpeed;
+                
+                this.zigZagTimer = 0;
+                this.isHardMode = difficulty === 'sulit' || (difficulty === 'campur' && Math.random() > 0.5);
+                this.frameOffset = Math.random() * 100; 
+            }
+
+            update() {
+                if (isWaitingFeedback) return;
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.isHardMode) {
+                    this.zigZagTimer++;
+                    if (this.zigZagTimer > 60) {
+                        const angle = Math.atan2(this.vy, this.vx) + (Math.random() - 0.5) * 1.5;
+                        const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                        this.vx = Math.cos(angle) * speed;
+                        this.vy = Math.sin(angle) * speed;
+                        this.zigZagTimer = 0;
+                    }
+                }
+
+                // Pantulan sesuai batas Zona Layar masing-masing
+                const bounds = getZoneBounds(this.zoneIndex, this.totalZones);
+                const minX = bounds.x + this.radius;
+                const maxX = bounds.x + bounds.w - this.radius;
+                const minY = bounds.y + (this.totalZones === 4 && this.zoneIndex >= 2 ? 50 : 120);
+                const maxY = bounds.y + bounds.h - this.radius - 60;
+
+                if (this.x < minX || this.x > maxX) {
+                    this.vx *= -1;
+                    this.x = Math.max(minX, Math.min(this.x, maxX));
+                }
+                if (this.y < minY || this.y > maxY) {
+                    this.vy *= -1;
+                    this.y = Math.max(minY, Math.min(this.y, maxY));
+                }
+            }
+
+            draw(ctx) {
+                const bobOffset = Math.sin(Date.now() / 200 + this.frameOffset) * 5;
+
+                ctx.save();
+                ctx.translate(this.x, this.y + bobOffset);
+
+                const emojiSize = this.totalZones >= 3 ? "38px Arial" : "48px Arial";
+                ctx.font = emojiSize;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText("🦟", 0, -16);
+
+                const fontSize = this.totalZones >= 3 ? "bold 13px Inter, sans-serif" : "bold 15px Inter, sans-serif";
+                ctx.font = fontSize;
+                
+                const metrics = ctx.measureText(this.text);
+                const padding = 8;
+                const boxWidth = metrics.width + padding * 2;
+                const boxHeight = 26;
+
+                ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+                ctx.shadowColor = "rgba(0,0,0,0.5)";
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.roundRect(-boxWidth / 2, 8, boxWidth, boxHeight, 12);
+                ctx.fill();
+
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "#4338ca";
+                ctx.stroke();
+
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = "#1e1b4b";
+                ctx.fillText(this.text, 0, 21);
+                
+                ctx.restore();
+            }
+        }
+
+        // ==========================================
+        // 7. LOGIKA PERMAINAN UTAMA
+        // ==========================================
+        function generateQuizData() {
+            const selectedPack = assessmentPacks.find(p => p.id === gameSettings.packId) || assessmentPacks[0];
+            gameSettings.packTitle = selectedPack.title;
+            let shuffled = [...selectedPack.questions].sort(() => 0.5 - Math.random());
+            currentQuestions = shuffled.slice(0, gameSettings.count);
+        }
+
+        async function startGame() {
+            const btn = document.getElementById('btn-start');
+            const statusMsg = document.getElementById('status-message');
+            
+            gameSettings.packId = document.getElementById('setting-assessment-pack').value;
+            gameSettings.count = parseInt(document.getElementById('setting-qcount').value);
+            gameSettings.diff = document.getElementById('setting-difficulty').value;
+            gameSettings.choices = parseInt(document.getElementById('setting-choices').value);
+            gameSettings.mode = selectedPlayMode;
+            gameSettings.battleScreens = parseInt(document.getElementById('setting-battle-screens').value);
+
+            btn.disabled = true;
+            btn.innerHTML = 'Menyiapkan Kamera...';
+            statusMsg.classList.remove('hidden');
+
+            try {
+                if (!hands) {
+                    await initMediaPipe();
+                }
+
+                // Sesuaikan jumlah deteksi tangan berdasarkan mode (Solo = 2 tangan, Battle/Kelompok = hingga 4 tangan)
+                hands.setOptions({
+                    maxNumHands: gameSettings.mode === 'solo' ? 2 : 4,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.6,
+                    selfieMode: true
+                });
+
+                document.getElementById('menu-screen').classList.add('hidden');
+                document.getElementById('game-over-screen').classList.add('hidden');
+                document.getElementById('game-screen').classList.remove('hidden');
+                
+                generateQuizData();
+                currentQIndex = 0;
+                score = 0;
+                battleScores = [0, 0, 0, 0];
+                setupScorePanelsUI();
+                
+                isGameRunning = true;
+                loadQuestion(currentQIndex);
+                
+                gameLoopId = requestAnimationFrame(gameLoop);
+
+            } catch (err) {
+                console.error("Gagal memulai:", err);
+                statusMsg.innerText = "Error: Kamera tidak diizinkan atau tidak ditemukan!";
+                btn.disabled = false;
+                btn.innerHTML = 'COBA LAGI';
+            }
+        }
+
+        function setupScorePanelsUI() {
+            const singlePanel = document.getElementById('score-panel-single');
+            const battlePanel = document.getElementById('score-panel-battle');
+            const modeLabel = document.getElementById('ui-mode-label');
+
+            if (gameSettings.mode === 'battle') {
+                singlePanel.classList.add('hidden');
+                battlePanel.classList.remove('hidden');
+                renderBattleScoreboard();
+            } else {
+                battlePanel.classList.add('hidden');
+                singlePanel.classList.remove('hidden');
+                modeLabel.innerText = gameSettings.mode === 'kelompok' ? `🤝 Skor Tim (${currentStudent.name})` : `🎯 Skor (${currentStudent.name})`;
+                document.getElementById('ui-score').innerText = score;
+            }
+        }
+
+        function renderBattleScoreboard() {
+            const battlePanel = document.getElementById('score-panel-battle');
+            const colors = ['border-cyan-400 text-cyan-300', 'border-amber-400 text-amber-300', 'border-emerald-400 text-emerald-300', 'border-pink-400 text-pink-300'];
+            battlePanel.innerHTML = '';
+
+            for (let i = 0; i < gameSettings.battleScreens; i++) {
+                const box = document.createElement('div');
+                box.className = `bg-black/65 backdrop-blur-md px-4 py-2 rounded-xl border-2 ${colors[i]} shadow`;
+                box.innerHTML = `
+                    <div class="text-[10px] font-extrabold uppercase">Layar P${i + 1}</div>
+                    <div class="text-2xl font-black text-white">${battleScores[i]}</div>
+                `;
+                battlePanel.appendChild(box);
+            }
+        }
+
+        function loadQuestion(index) {
+            isWaitingFeedback = false;
+            if (index >= currentQuestions.length) {
+                showGameOver();
+                return;
+            }
+
+            const qData = currentQuestions[index];
+            document.getElementById('ui-question').innerText = qData.q;
+            document.getElementById('ui-progress').innerText = `${index + 1}/${ currentQuestions.length }`;
+            
+            let baseOptions = [{ text: qData.a, isCorrect: true }];
+            let distractorCopy = [...qData.dist].sort(() => 0.5 - Math.random());
+            for (let i = 0; i < gameSettings.choices - 1; i++) {
+                if (distractorCopy[i]) {
+                    baseOptions.push({ text: distractorCopy[i], isCorrect: false });
+                }
+            }
+
+            mosquitos = [];
+            if (gameSettings.mode === 'battle') {
+                // Buat set nyamuk di masing-masing layar zona pemain (2 - 4 layar)
+                for (let z = 0; z < gameSettings.battleScreens; z++) {
+                    const zoneOpts = [...baseOptions].sort(() => 0.5 - Math.random());
+                    zoneOpts.forEach(opt => {
+                        mosquitos.push(new Mosquito(opt.text, opt.isCorrect, gameSettings.diff, z, gameSettings.battleScreens));
+                    });
+                }
+            } else {
+                const shuffledOpts = [...baseOptions].sort(() => 0.5 - Math.random());
+                shuffledOpts.forEach(opt => {
+                    mosquitos.push(new Mosquito(opt.text, opt.isCorrect, gameSettings.diff, 0, 1));
+                });
+            }
+        }
+
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Gambar garis pembatas layar jika Mode Battle (2-4 Layar)
+            if (gameSettings.mode === 'battle') {
+                drawBattleZonesGrid();
+            }
+
+            // Update & Gambar Nyamuk
+            mosquitos.forEach(m => {
+                m.update();
+                m.draw(canvasCtx);
+            });
+
+            // Gambar Semua Tangan yang Terdeteksi & Cek Tangkapan
+            drawAllHandsAndCheckCatch();
+
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        function drawBattleZonesGrid() {
+            const total = gameSettings.battleScreens;
+            const zoneColors = ['rgba(34, 211, 238, 0.7)', 'rgba(251, 191, 36, 0.7)', 'rgba(52, 211, 153, 0.7)', 'rgba(244, 114, 182, 0.7)'];
+
+            canvasCtx.save();
+            for (let z = 0; z < total; z++) {
+                const b = getZoneBounds(z, total);
+                canvasCtx.strokeStyle = zoneColors[z];
+                canvasCtx.lineWidth = 4;
+                canvasCtx.strokeRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
+
+                // Label Zona Pemain di Sudut Bawah Zona
+                canvasCtx.fillStyle = zoneColors[z];
+                canvasCtx.font = "bold 16px Inter, sans-serif";
+                canvasCtx.fillText(`ARENA PEMAIN ${z + 1}`, b.x + 16, b.y + b.h - 20);
+            }
+            canvasCtx.restore();
+        }
+
+        function drawAllHandsAndCheckCatch() {
+            const pointerColors = ['#06b6d4', '#f59e0b', '#10b981', '#ec4899'];
+
+            for (let i = 0; i < trackedHands.length; i++) {
+                const h = trackedHands[i];
+                const wasFist = prevHandsFist[i] || false;
+
+                canvasCtx.save();
+                canvasCtx.shadowBlur = 15;
+
+                if (h.isFist) {
+                    canvasCtx.shadowColor = "rgba(255, 0, 0, 0.8)";
+                    canvasCtx.fillStyle = "rgba(239, 68, 68, 0.85)";
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(h.x, h.y, 24, 0, Math.PI * 2);
+                    canvasCtx.fill();
+                    canvasCtx.strokeStyle = "white";
+                    canvasCtx.lineWidth = 3;
+                    canvasCtx.stroke();
+                } else {
+                    const color = pointerColors[i % pointerColors.length];
+                    canvasCtx.shadowColor = color;
+                    canvasCtx.strokeStyle = color;
+                    canvasCtx.lineWidth = 4;
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(h.x, h.y, 32, 0, Math.PI * 2);
+                    canvasCtx.stroke();
+
+                    canvasCtx.fillStyle = "rgba(255,255,255,0.7)";
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(h.x, h.y, 5, 0, Math.PI * 2);
+                    canvasCtx.fill();
+                }
+                canvasCtx.restore();
+
+                // Deteksi transisi Mengepal (Grab)
+                if (h.isFist && !wasFist && !isWaitingFeedback) {
+                    checkCatchAtPoint(h.x, h.y);
+                }
+                prevHandsFist[i] = h.isFist;
+            }
+
+            // Reset status tangan yang tidak lagi tampak
+            for (let j = trackedHands.length; j < 4; j++) {
+                prevHandsFist[j] = false;
+            }
+        }
+
+        function checkCatchAtPoint(hx, hy) {
+            if (isWaitingFeedback) return;
+
+            let hitMosquito = null;
+            const catchRadius = 60;
+
+            for (let i = 0; i < mosquitos.length; i++) {
+                const m = mosquitos[i];
+                const dx = hx - m.x;
+                const dy = hy - m.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < catchRadius) {
+                    hitMosquito = m;
+                    break;
+                }
+            }
+
+            if (hitMosquito) {
+                const playerZone = gameSettings.mode === 'battle'
+                    ? getZoneIndexFromPoint(hx, hy, gameSettings.battleScreens)
+                    : 0;
+                handleAnswer(hitMosquito.isCorrect, playerZone);
+            }
+        }
+
+        function handleAnswer(isCorrect, playerZone = 0) {
+            isWaitingFeedback = true;
+            
+            const feedbackEl = document.getElementById('ui-feedback');
+            feedbackEl.classList.remove('hidden');
+            feedbackEl.classList.remove('pop-in');
+            void feedbackEl.offsetWidth;
+            feedbackEl.classList.add('pop-in');
+
+            if (gameSettings.mode === 'battle') {
+                if (isCorrect) {
+                    battleScores[playerZone] += 10;
+                    feedbackEl.innerText = `PEMAIN ${playerZone + 1} BENAR! +10`;
+                    feedbackEl.className = "absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl md:text-7xl font-black uppercase tracking-widest z-50 text-green-400 drop-shadow-[0_0_20px_rgba(74,222,128,1)] pop-in text-center";
+                } else {
+                    battleScores[playerZone] = Math.max(0, battleScores[playerZone] - 2);
+                    feedbackEl.innerText = `PEMAIN ${playerZone + 1} SALAH! -2`;
+                    feedbackEl.className = "absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl md:text-7xl font-black uppercase tracking-widest z-50 text-red-500 drop-shadow-[0_0_20px_rgba(239,68,68,1)] pop-in text-center";
+                }
+                renderBattleScoreboard();
+            } else {
+                if (isCorrect) {
+                    score += 10;
+                    feedbackEl.innerText = "BENAR! +10";
+                    feedbackEl.className = "absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-5xl md:text-8xl font-black uppercase tracking-widest z-50 text-green-400 drop-shadow-[0_0_20px_rgba(74,222,128,1)] pop-in text-center";
+                } else {
+                    score = Math.max(0, score - 2);
+                    feedbackEl.innerText = "SALAH! -2";
+                    feedbackEl.className = "absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-5xl md:text-8xl font-black uppercase tracking-widest z-50 text-red-500 drop-shadow-[0_0_20px_rgba(239,68,68,1)] pop-in text-center";
+                }
+                document.getElementById('ui-score').innerText = score;
+            }
+
+            setTimeout(() => {
+                feedbackEl.classList.add('hidden');
+                currentQIndex++;
+                loadQuestion(currentQIndex);
+            }, 1500);
+        }
+
+        function showGameOver() {
+            isGameRunning = false;
+            cancelAnimationFrame(gameLoopId);
+            
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            const singleBox = document.getElementById('gameover-single-box');
+            const battleBox = document.getElementById('gameover-battle-box');
+            const subtitle = document.getElementById('gameover-subtitle');
+
+            let modeLabelText = "Individu (Solo)";
+            let scoreTextForTeacher = `${score} Poin`;
+
+            if (gameSettings.mode === 'battle') {
+                modeLabelText = `Battle (${gameSettings.battleScreens} Layar)`;
+                singleBox.classList.add('hidden');
+                battleBox.classList.remove('hidden');
+                battleBox.innerHTML = '';
+
+                let maxScore = -1;
+                let winners = [];
+                const summaryParts = [];
+
+                for (let i = 0; i < gameSettings.battleScreens; i++) {
+                    const s = battleScores[i];
+                    summaryParts.push(`P${i + 1}: ${s}`);
+                    if (s > maxScore) {
+                        maxScore = s;
+                        winners = [`Pemain ${i + 1}`];
+                    } else if (s === maxScore) {
+                        winners.push(`Pemain ${i + 1}`);
+                    }
+
+                    const row = document.createElement('div');
+                    row.className = "flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200";
+                    row.innerHTML = `
+                        <span class="font-bold text-slate-800">🖥️ Layar Pemain ${i + 1}</span>
+                        <span class="text-xl font-black text-indigo-600">${s} Poin</span>
+                    `;
+                    battleBox.appendChild(row);
+                }
+
+                subtitle.innerText = `Pemenang Battle: ${winners.join(' & ')}!`;
+                scoreTextForTeacher = summaryParts.join(' | ');
+            } else {
+                if (gameSettings.mode === 'kelompok') modeLabelText = "Kelompok (Tim)";
+                battleBox.classList.add('hidden');
+                singleBox.classList.remove('hidden');
+                subtitle.innerText = `${currentStudent.name} (${currentStudent.kelas}) telah menyelesaikan asesmen.`;
+                document.getElementById('final-score').innerText = score;
+            }
+
+            // Simpan ke Riwayat Hasil Asesmen Guru
+            const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+            assessmentResults.unshift({
+                time: nowStr,
+                studentName: currentStudent.name,
+                kelas: currentStudent.kelas,
+                packTitle: gameSettings.packTitle,
+                modeLabel: modeLabelText,
+                scoreDisplay: scoreTextForTeacher
+            });
+        }
+
+        function backToStudentMenu() {
+            isGameRunning = false;
+            if (gameLoopId) cancelAnimationFrame(gameLoopId);
+
+            const btn = document.getElementById('btn-start');
+            btn.disabled = false;
+            btn.innerHTML = 'MULAI MAIN';
+            document.getElementById('status-message').classList.add('hidden');
+
+            document.getElementById('game-screen').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('menu-screen').classList.remove('hidden');
+        }
+
+        // ==========================================
+        // 8. COMPUTER VISION (MediaPipe Multi-Hands)
+        // ==========================================
+        function initMediaPipe() {
+            return new Promise((resolve, reject) => {
+                try {
+                    hands = new Hands({
+                        locateFile: (file) => {
+                            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                        }
+                    });
+                    
+                    hands.setOptions({
+                        maxNumHands: 4,
+                        modelComplexity: 1,
+                        minDetectionConfidence: 0.6,
+                        minTrackingConfidence: 0.6,
+                        selfieMode: true
+                    });
+
+                    hands.onResults(onMediaPipeResults);
+
+                    camera = new Camera(videoElement, {
+                        onFrame: async () => {
+                            await hands.send({image: videoElement});
+                        },
+                        width: 1280,
+                        height: 720
+                    });
+
+                    camera.start().then(() => {
+                        resolve();
+                    }).catch(err => {
+                        reject(err);
+                    });
+                    
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+
+        function onMediaPipeResults(results) {
+            if (!isGameRunning) return;
+
+            trackedHands = [];
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                function getDistance(p1, p2) {
+                    return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+                }
+
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const hx = landmarks[9].x * canvasElement.width;
+                    const hy = landmarks[9].y * canvasElement.height;
+
+                    const wrist = landmarks[0];
+                    const indexClosed = getDistance(landmarks[8], wrist) < getDistance(landmarks[5], wrist);
+                    const middleClosed = getDistance(landmarks[12], wrist) < getDistance(landmarks[9], wrist);
+                    const ringClosed = getDistance(landmarks[16], wrist) < getDistance(landmarks[13], wrist);
+
+                    const fistState = (indexClosed && middleClosed && ringClosed);
+                    trackedHands.push({ x: hx, y: hy, isFist: fistState });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
